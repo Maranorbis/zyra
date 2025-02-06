@@ -9,6 +9,7 @@ const ArgIterator = std.process.ArgIterator;
 const FlagParamsArray = std.ArrayList([]const u8);
 const PositionalParamsArray = std.ArrayList([]const u8);
 
+/// Symbols is a namespace which includes constants values that are used as identifiers by Parser.
 const Symbols = struct {
     const Flag = enum(u8) {
         identifier = '-',
