@@ -1,64 +1,37 @@
-const Parser = @This();
-
 const std = @import("std");
+
+const fmt = std.fmt;
+const mem = std.mem;
+const ascii = std.ascii;
+const process = std.process;
 const testing = std.testing;
 
 const Allocator = std.mem.Allocator;
 const ArgIterator = std.process.ArgIterator;
 
-const FlagParamsArray = std.ArrayList([]const u8);
-const PositionalParamsArray = std.ArrayList([]const u8);
+pub const Error = error{ UnknownError, OutOfMemory, InvalidFlagValue };
 
-/// Symbols is a namespace which includes constants values that are used as identifiers by Parser.
-const Symbols = struct {
-    const Flag = enum(u8) {
-        identifier = '-',
-        separator = '=',
-    };
+const Symbols = packed struct {
+    const FlagIdentifier: u8 = '-';
+    const KeyValueSeparator: u8 = '=';
 };
 
-pub const Error = error{ UnknownError, OutOfMemory };
-
-pub const Context = struct {
-    flags: FlagParamsArray,
-    positionals: PositionalParamsArray,
+pub const ArgParser = struct {
+    allocator: Allocator,
+    args: [][]u8,
 
     const Self = @This();
 
-    pub fn deinit(self: Self) void {
-        self.flags.deinit();
-        self.positionals.deinit();
+    pub fn init(allocator: Allocator) !Self {
+        const args = try process.argsAlloc();
+
+        return .{
+            .allocator = allocator,
+            .args = args,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        process.argsFree(self.allocator, self.args);
     }
 };
-
-allocator: Allocator,
-context: Context = undefined, // We will initialize this later but obtain a pointer to the memory address for now.
-
-pub fn init(allocator: Allocator) Parser {
-    return .{
-        .allocator = allocator,
-    };
-}
-
-pub fn parse(self: *Parser, it: *ArgIterator) Error!void {
-    var context: Context = .{
-        .flags = FlagParamsArray.init(self.allocator),
-        .positionals = PositionalParamsArray.init(self.allocator),
-    };
-
-    _ = it.skip();
-
-    while (it.next()) |arg| {
-        if (arg[0] == @intFromEnum(Symbols.Flag.identifier)) {
-            try context.flags.append(arg);
-        } else {
-            try context.positionals.append(arg);
-        }
-    }
-
-    self.context = context;
-}
-
-pub fn deinit(self: *Parser) void {
-    self.context.deinit();
-}
