@@ -9,16 +9,18 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const ArgIterator = std.process.ArgIterator;
 
-pub const ParseError = error{ UnknownError, OutOfMemory, InvalidFlagValue };
+pub const ParserError = error{OutOfMemory};
 
 pub const ArgParser = struct {
     allocator: Allocator,
-    args: [][]u8,
+    args: []const [:0]u8,
 
     const Self = @This();
 
-    pub fn init(allocator: Allocator) !Self {
-        const args = try process.argsAlloc();
+    pub fn init(allocator: Allocator) ParserError!Self {
+        const args = process.argsAlloc() catch {
+            return ParserError.OutOfMemory;
+        };
 
         return .{
             .allocator = allocator,
