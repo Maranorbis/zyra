@@ -9,12 +9,7 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const ArgIterator = std.process.ArgIterator;
 
-pub const Error = error{ UnknownError, OutOfMemory, InvalidFlagValue };
-
-const Symbols = packed struct {
-    const FlagIdentifier: u8 = '-';
-    const KeyValueSeparator: u8 = '=';
-};
+pub const ParseError = error{ UnknownError, OutOfMemory, InvalidFlagValue };
 
 pub const ArgParser = struct {
     allocator: Allocator,
