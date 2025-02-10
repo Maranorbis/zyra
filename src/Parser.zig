@@ -3,57 +3,29 @@ const Parser = @This();
 const std = @import("std");
 const flag = @import("flag.zig");
 
+const Command = @import("Command.zig");
+const ParseResult = @import("ParseResult.zig");
+
+const Allocator = std.mem.Allocator;
 const fmt = std.fmt;
 const mem = std.mem;
 const ascii = std.ascii;
 const process = std.process;
 const testing = std.testing;
 
-const Allocator = std.mem.Allocator;
-const ArgIterator = std.process.ArgIterator;
-
 const Flag = flag.Flag;
 const FlagMap = std.StaticStringMap(Flag);
-
-const FlagValueMap = flag.FlagValueMap;
-const PositionalArray = std.ArrayList([:0]const u8);
+const CommandMap = std.StaticStringMap(Command);
 
 pub const ParseError = error{
     InvalidArgSequence,
     FlagNotFound,
+    CommandNotFound,
     AlreadyExists,
 } || flag.Error;
 
 allocator: Allocator,
 message: []const u8 = "",
-
-// This heiarchy must be respected, one cannot be present before the other.
-const ParseMode = enum {
-    command,
-    flag,
-    positional,
-};
-
-const ParseResult = struct {
-    allocator: Allocator,
-    flags: FlagValueMap,
-    positionals: PositionalArray,
-
-    const Self = @This();
-
-    pub fn init(allocator: Allocator) Self {
-        return .{
-            .allocator = allocator,
-            .flags = FlagValueMap.init(allocator),
-            .positionals = PositionalArray.init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.flags.deinit();
-        self.positionals.deinit();
-    }
-};
 
 pub fn init(allocator: Allocator) Parser {
     return .{
@@ -62,23 +34,13 @@ pub fn init(allocator: Allocator) Parser {
 }
 
 pub fn parse(self: *Parser, args: []const [:0]const u8, flagMap: FlagMap) ParseError!ParseResult {
-    var mode: ParseMode = .flag;
     var res = ParseResult.init(self.allocator);
 
-    for (args[1..]) |arg| {
-        switch (parseMode(arg)) {
-            .command => {
-                if (mode == .flag or mode == .positional) {
-                    self.message = "A command was provided in-between flags and positional parameters.\n";
-                    res.deinit();
-                    return ParseError.InvalidArgSequence;
-                }
+    for (args) |arg| {
+        const isFlag = std.mem.eql(u8, "--", arg[0..2]) or std.mem.eql(u8, "-", arg[0..1]);
 
-                // TODO: Set command in ParseResult
-            },
-            .flag => {
-                if (mode == .command) mode = .flag;
-
+        switch (isFlag) {
+            true => {
                 const key, const value = blk: {
                     const kv = flag.sanitize(arg);
                     if (kv.len == 0) break :blk .{ "", "" };
@@ -100,24 +62,13 @@ pub fn parse(self: *Parser, args: []const [:0]const u8, flagMap: FlagMap) ParseE
                 try res.flags.put(defined_flag.long, value);
                 try res.flags.put(defined_flag.short, value);
             },
-            .positional => {
-                if (mode == .flag or mode == .command) mode = .positional;
-
+            false => {
                 try res.positionals.append(arg);
             },
         }
     }
 
     return res;
-}
-
-// TODO: Add check for Command
-fn parseMode(arg: []const u8) ParseMode {
-    if (std.mem.eql(u8, "--", arg[0..2]) or std.mem.eql(u8, "-", arg[0..1])) {
-        return ParseMode.flag;
-    }
-
-    return ParseMode.positional;
 }
 
 test "initializes" {
@@ -128,7 +79,8 @@ test "initializes" {
 test "parse returns ParseResult" {
     var parser = Parser.init(std.testing.allocator);
 
-    const args = [_][:0]const u8{ "app", "arg1", "arg2", "--value=20", "-b=40" };
+    // First paramter is assumed to be skipped here, which is binary or application itself.
+    const args = [_][:0]const u8{ "arg1", "arg2", "--value=20", "-b=40" };
 
     const flagMap = FlagMap.initComptime(&.{
         .{ "value", Flag{ .long = "value", .short = "v" } },
@@ -156,7 +108,8 @@ test "parse returns ParseResult" {
 test "parse returns FlagNotFound error on invalid flag" {
     var parser = Parser.init(std.testing.allocator);
 
-    const args = [_][:0]const u8{ "app", "arg1", "arg2", "--flag", "arg3", "-g", "--value=20", "-b=40", "--", "-l=" };
+    // First paramter is assumed to be skipped here, which is binary or application itself.
+    const args = [_][:0]const u8{ "arg1", "arg2", "--flag", "arg3", "-g", "--value=20", "-b=40", "--", "-l=" };
 
     const flagMap = FlagMap.initComptime(&.{
         .{ "value", Flag{ .long = "value", .short = "v" } },
