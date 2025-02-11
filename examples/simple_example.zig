@@ -1,6 +1,13 @@
 const std = @import("std");
-const process = std.process;
 const zyra = @import("zyra");
+
+const process = std.process;
+
+fn appHandler(res: *zyra.ParseResult) void {
+    defer res.deinit();
+
+    std.debug.print("Hello {?s}\n", .{res.positionals.getLastOrNull()});
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -13,24 +20,11 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     var parser = zyra.Parser.init(allocator);
-    defer parser.deinit();
 
-    var it = process.argsWithAllocator(allocator) catch {
-        try std.fmt.format(std.io.getStdErr().writer(), "Unable to allocate memory for ArgIterator\n.", .{});
-    };
-    defer it.deinit();
+    var app = zyra.Command.init("say", &appHandler, &.{}, &.{});
 
-    try parser.parse(&it);
+    const args = try process.argsAlloc(allocator);
+    defer process.argsFree(allocator, args);
 
-    const writer = std.io.getStdOut().writer();
-
-    try writer.writeAll("Flags:\n");
-    for (parser.context.flags.items) |f| {
-        try std.fmt.format(std.io.getStdErr().writer(), "\t{s}\n", .{f});
-    }
-
-    try writer.writeAll("\nPositonals:\n");
-    for (parser.context.positionals.items) |p| {
-        try std.fmt.format(std.io.getStdErr().writer(), "\t{s}\n", .{p});
-    }
+    app.run(&parser, args);
 }

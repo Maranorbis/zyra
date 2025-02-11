@@ -14,7 +14,7 @@ const FlagMapEntry = struct { []const u8, Flag };
 const CommandMap = std.StaticStringMap(Command);
 const CommandMapEntry = struct { []const u8, Command };
 
-pub const Handler = *const fn (*const ParseResult) void;
+pub const Handler = *const fn (*ParseResult) void;
 
 pub const CommandError = error{DoesNotExist};
 
@@ -72,29 +72,30 @@ pub fn getCommand(self: *Command, name: []const u8) CommandError!Command {
     return self.commandMap.get(name) orelse CommandError.DoesNotExist;
 }
 
-pub fn run(self: *Command, args: []const [:0]const u8, parser: Parser) void {
+pub fn run(self: *Command, parser: *Parser, args: []const [:0]const u8) void {
     var cmd = self;
 
-    var idx: usize = 0;
+    var idx: usize = 1;
 
-    while (idx < args.len) : ({
-        idx += 1;
-    }) {
+    while (idx < args.len - 1) {
         if (cmd.hasCommand(args[idx])) {
-            cmd = cmd.getCommand(args[idx]) catch {
+            var c = cmd.getCommand(args[idx]) catch {
                 @panic("Unhandled case, command not found. Panicking");
             };
+
+            cmd = &c;
+            idx += 1;
         }
     }
 
-    const res = parser.parse(args[idx..], cmd.flagMap) catch {
+    var res = parser.parse(args[idx..], cmd.flagMap) catch {
         @panic("Unhandled case, ParseError. Panicking from run method of command");
     };
 
     cmd.handler(&res);
 }
 
-fn testCmdHandler(res: *const ParseResult) void {
+fn testCmdHandler(res: *ParseResult) void {
     _ = res;
 }
 

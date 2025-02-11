@@ -17,7 +17,7 @@ const Flag = flag.Flag;
 const FlagMap = std.StaticStringMap(Flag);
 const CommandMap = std.StaticStringMap(Command);
 
-pub const ParseError = error{
+const ParseError = error{
     InvalidArgSequence,
     FlagNotFound,
     CommandNotFound,
