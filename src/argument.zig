@@ -8,7 +8,7 @@ const Flag = struct {
 };
 
 const Positional = struct {
-    pos: usize,
+    pos: comptime_int,
     value: type,
 };
 
@@ -27,7 +27,7 @@ pub const Argument = union(ArgumentKind) {
             return .{ .flag = Flag{ .long = long, .short = short, .value = T } };
         }
 
-        pub fn positional(comptime T: type, comptime pos: usize) Argument {
+        pub fn positional(comptime T: type, comptime pos: comptime_int) Argument {
             return .{ .positional = Positional{ .pos = pos, .value = T } };
         }
     };
