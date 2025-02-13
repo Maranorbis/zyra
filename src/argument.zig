@@ -2,8 +2,8 @@ const std = @import("std");
 const testing = std.testing;
 
 const Flag = struct {
-    long: []const u8,
-    short: []const u8,
+    long: [:0]const u8,
+    short: [:0]const u8,
     value: type,
 };
 
@@ -12,18 +12,18 @@ const Positional = struct {
     value: type,
 };
 
-const ArgumentKind = enum { flag, positional };
+pub const ArgumentKind = enum { flag, positional };
 pub const Argument = union(ArgumentKind) {
     flag: Flag,
     positional: Positional,
 
     // Namespace, spearating instantiated fields from initialization methods.
     pub const Factory = struct {
-        pub fn flag(comptime long: []const u8, comptime short: []const u8) Argument {
+        pub fn flag(comptime long: [:0]const u8, comptime short: [:0]const u8) Argument {
             return .{ .flag = Flag{ .long = long, .short = short, .value = bool } };
         }
 
-        pub fn valueFlag(comptime T: type, comptime long: []const u8, comptime short: []const u8) Argument {
+        pub fn valueFlag(comptime T: type, comptime long: [:0]const u8, comptime short: [:0]const u8) Argument {
             return .{ .flag = Flag{ .long = long, .short = short, .value = T } };
         }
 
@@ -31,6 +31,13 @@ pub const Argument = union(ArgumentKind) {
             return .{ .positional = Positional{ .pos = pos, .value = T } };
         }
     };
+
+    pub fn kind(self: *const Argument) ArgumentKind {
+        return switch (self.*) {
+            .flag => .flag,
+            .positional => .positional,
+        };
+    }
 };
 
 test "Flag" {
