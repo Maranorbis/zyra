@@ -6,10 +6,16 @@ const testing = std.testing;
 
 const ArgIterator = process.ArgIterator;
 
+const Flag = argument.Flag;
+const Flags = []const argument.Flag;
+
+const Positional = argument.Positional;
+const Positionals = []const argument.Positional;
+
 const Argument = argument.Argument;
 const Arguments = []const argument.Argument;
 
-pub fn ArgumentResult(comptime Args: Arguments) type {
+fn ArgumentResult(comptime Args: Arguments) type {
     var fields: [Args.len]std.builtin.Type.StructField = undefined;
 
     for (Args, &fields) |arg, *dst| {
@@ -68,27 +74,12 @@ pub fn Parser(comptime Args: Arguments) type {
             writer.writeAll(self.state.message);
         }
 
-        // pub fn parseIt(self: *Self, it: *ArgIterator) !ArgumentResult(Args) {
-        //     var res: ArgumentResult(Args) = undefined;
-        //
-        //     _ = it.skip();
-        //
-        //     while (it.next()) |arg| {
-        //         if (std.mem.lastIndexOfScalar(u8, '-', arg)) |idx| {
-        //             // if (arg.len <= (idx + 1)) return error.ParseError;
-        //             // const sepIdx = std.mem.indexOfScalar(u8, '=', arg);
-        //             // const name = arg[idx + 1 .. sepIdx];
-        //             // inline for (Args) |a| {}
-        //         }
-        //     }
-        //
-        //     return res;
-        // }
-
         pub fn parseArgs(self: *Self, args: []const [:0]const u8) !ArgumentResult(Args) {
             _ = self;
 
             var res: ArgumentResult(Args) = undefined;
+
+            const FlagStatus = enum { found, not_found };
 
             for (args[1..]) |arg| {
                 if (std.mem.lastIndexOfScalar(u8, arg, '-')) |idx| {
@@ -108,14 +99,17 @@ pub fn Parser(comptime Args: Arguments) type {
                     // - Otherwise, use `"1"` as the default value (indicating the presence of flag).
                     const value = if (sep_idx < arg.len - 1) arg[sep_idx + 1 ..] else "1";
 
-                    // TODO: Handle unknown flag cases, return error if an invalid flag is provided
+                    var status: FlagStatus = .not_found;
                     inline for (Args) |a| {
                         if (std.mem.eql(u8, name, a.flag.long) or
                             std.mem.eql(u8, name, a.flag.short))
                         {
+                            status = .found;
                             @field(res, a.flag.long) = try parseValue(a.flag.value, &value);
                         }
                     }
+
+                    if (status == .not_found) return error.NotFound;
                 }
             }
 
@@ -149,14 +143,33 @@ test "Parser" {
         Argument.Factory.flag("help", "h"),
         Argument.Factory.valueFlag(usize, "value", "v"),
         Argument.Factory.valueFlag(bool, "show", "s"),
+        Argument.Factory.valueFlag(bool, "gobble", "g"),
+        Argument.Factory.valueFlag(bool, "double_gobble", "g"),
     };
 
-    const osArgs = &.{ "app", "--test", "--value=20", "-s=true" };
+    const osArgs = &.{ "app", "--value=20", "-s=true", "-g", "--double_gobble" };
 
     var parser = Parser(args).default;
     const res = try parser.parseArgs(osArgs);
 
     try testing.expect(res.show);
+    try testing.expect(res.gobble);
+    try testing.expect(res.double_gobble);
     try testing.expect(res.help == false);
     try testing.expectEqual(res.value, 20);
+}
+
+test "Parser returns NotFound if an unknown Flag is provided" {
+    const args = &.{
+        Argument.Factory.flag("help", "h"),
+        Argument.Factory.valueFlag(usize, "value", "v"),
+        Argument.Factory.valueFlag(bool, "show", "s"),
+    };
+
+    // `--test` flag is not defined in the arg list above.
+    const osArgs = &.{ "app", "--test", "--value=20", "-s=true" };
+
+    var parser = Parser(args).default;
+
+    try testing.expectError(error.NotFound, parser.parseArgs(osArgs));
 }
