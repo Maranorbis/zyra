@@ -1,39 +1,92 @@
 const std = @import("std");
 const argument = @import("argument.zig");
 
+const fmt = std.fmt;
 const process = std.process;
 const testing = std.testing;
 
+const Type = std.builtin.Type;
 const ArgIterator = process.ArgIterator;
-
-const Flag = argument.Flag;
-const Flags = []const argument.Flag;
-
-const Positional = argument.Positional;
-const Positionals = []const argument.Positional;
 
 const Argument = argument.Argument;
 const Arguments = []const argument.Argument;
 
-fn ArgumentResult(comptime Args: Arguments) type {
-    var fields: [Args.len]std.builtin.Type.StructField = undefined;
+pub fn ParseResult(comptime Args: Arguments) type {
+    return struct {
+        flags: FlagResult(Args),
+        positionals: PositionalResult(Args),
+    };
+}
 
+fn FlagResult(comptime Args: Arguments) type {
+    const len = comptime blk: {
+        var count: usize = 0;
+
+        for (Args) |arg| {
+            if (arg.kind() == .flag) count += 1;
+        }
+
+        break :blk count;
+    };
+
+    if (len == 0) {
+        return @Type(.{ .Struct = .{
+            .layout = .auto,
+            .fields = &.{},
+            .decls = &.{},
+            .is_tuple = false,
+        } });
+    }
+
+    var fields: [len]Type.StructField = undefined;
     for (Args, &fields) |arg, *dst| {
-        const name = switch (arg.kind()) {
-            .flag => arg.flag.long,
-            .positional => std.fmt.comptimePrint(arg.positional.pos),
-        };
-
-        const value =
-            switch (arg.kind()) {
-            .flag => arg.flag.value,
-            .positional => arg.positional.value,
-        };
+        if (arg.kind() == .positional) continue;
 
         dst.* = .{
-            .name = name,
-            .type = value,
-            .alignment = @alignOf(value),
+            .name = arg.flag.long,
+            .type = arg.flag.value,
+            .alignment = @alignOf(arg.flag.value),
+            .is_comptime = false,
+            .default_value = null,
+        };
+    }
+
+    return @Type(.{ .Struct = .{
+        .layout = .auto,
+        .fields = &fields,
+        .decls = &.{},
+        .is_tuple = false,
+    } });
+}
+
+fn PositionalResult(comptime Args: Arguments) type {
+    const len = comptime blk: {
+        var count: usize = 0;
+
+        for (Args) |arg| {
+            if (arg.kind() == .positional) count += 1;
+        }
+
+        break :blk count;
+    };
+
+    if (len == 0) {
+        return @Type(.{ .Struct = .{
+            .layout = .auto,
+            .fields = &.{},
+            .decls = &.{},
+            .is_tuple = false,
+        } });
+    }
+
+    var fields: [len]Type.StructField = undefined;
+    for (Args, &fields) |arg, *dst| {
+        if (arg.kind() == .flag) continue;
+
+        dst.* = .{
+            .name = fmt.comptimePrint("{d}", .{arg.positional.pos}),
+            .type = arg.positional.value,
+            .alignment = @alignOf(arg.positional.value),
             .is_comptime = false,
             .default_value = null,
         };
@@ -74,12 +127,15 @@ pub fn Parser(comptime Args: Arguments) type {
             writer.writeAll(self.state.message);
         }
 
-        pub fn parseArgs(self: *Self, args: []const [:0]const u8) !ArgumentResult(Args) {
+        pub fn parseArgs(self: *Self, args: []const [:0]const u8) !ParseResult(Args) {
             _ = self;
 
-            var res: ArgumentResult(Args) = undefined;
+            const ArgStatus = enum { found, not_found };
 
-            const FlagStatus = enum { found, not_found };
+            var flagRes: FlagResult(Args) = undefined;
+            var posRes: PositionalResult(Args) = undefined;
+
+            var posIdx: usize = 0;
 
             for (args[1..]) |arg| {
                 if (std.mem.lastIndexOfScalar(u8, arg, '-')) |idx| {
@@ -99,19 +155,52 @@ pub fn Parser(comptime Args: Arguments) type {
                     // - Otherwise, use `"1"` as the default value (indicating the presence of flag).
                     const value = if (sep_idx < arg.len - 1) arg[sep_idx + 1 ..] else "1";
 
-                    var status: FlagStatus = .not_found;
+                    var status: ArgStatus = .not_found;
                     inline for (Args) |a| {
+                        if (status == .found) break;
+
+                        const isFlag = comptime blk: {
+                            break :blk a.kind() == .flag;
+                        };
+
+                        if (!isFlag) break;
+
                         if (std.mem.eql(u8, name, a.flag.long) or
                             std.mem.eql(u8, name, a.flag.short))
                         {
                             status = .found;
-                            @field(res, a.flag.long) = try parseValue(a.flag.value, &value);
+                            @field(flagRes, a.flag.long) = try parseValue(a.flag.value, &value);
                         }
                     }
 
                     if (status == .not_found) return error.NotFound;
+                } else {
+                    var status: ArgStatus = .not_found;
+                    inline for (Args) |a| {
+                        if (status == .found) break;
+
+                        const isPositional = comptime blk: {
+                            break :blk a.kind() == .positional;
+                        };
+
+                        if (!isPositional) break;
+
+                        if (posIdx == a.positional.pos) {
+                            status = .found;
+
+                            const name = fmt.comptimePrint("{d}", .{a.positional.pos});
+                            @field(posRes, name) = try parseValue(a.positional.value, &arg);
+
+                            posIdx += 1;
+                        }
+                    }
                 }
             }
+
+            var res: ParseResult(Args) = undefined;
+
+            res.flags = flagRes;
+            res.positionals = posRes;
 
             return res;
         }
@@ -152,11 +241,11 @@ test "Parser" {
     var parser = Parser(args).default;
     const res = try parser.parseArgs(osArgs);
 
-    try testing.expect(res.show);
-    try testing.expect(res.gobble);
-    try testing.expect(res.double_gobble);
-    try testing.expect(res.help == false);
-    try testing.expectEqual(res.value, 20);
+    try testing.expect(res.flags.show);
+    try testing.expect(res.flags.gobble);
+    try testing.expect(res.flags.double_gobble);
+    try testing.expect(res.flags.help == false);
+    try testing.expectEqual(res.flags.value, 20);
 }
 
 test "Parser returns NotFound if an unknown Flag is provided" {
@@ -172,4 +261,20 @@ test "Parser returns NotFound if an unknown Flag is provided" {
     var parser = Parser(args).default;
 
     try testing.expectError(error.NotFound, parser.parseArgs(osArgs));
+}
+
+test "Parser parses positional argument" {
+    const args = &.{
+        Argument.Factory.positional(bool, 0),
+        Argument.Factory.positional(usize, 1),
+    };
+
+    const osArgs = &.{ "app", "true", "20" };
+
+    var parser = Parser(args).default;
+
+    const res = try parser.parseArgs(osArgs);
+
+    try testing.expect(res.positionals.@"0");
+    try testing.expectEqual(20, res.positionals.@"1");
 }
