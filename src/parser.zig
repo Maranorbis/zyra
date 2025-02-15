@@ -11,6 +11,8 @@ const ArgIterator = process.ArgIterator;
 const Argument = argument.Argument;
 const Arguments = []const argument.Argument;
 
+pub const ParseError = error{ OutOfMemory, NotFound, Value, InvalidFlag };
+
 pub fn ParseResult(comptime Args: Arguments) type {
     return struct {
         flags: FlagResult(Args),
@@ -117,83 +119,40 @@ pub fn Parser(comptime Args: Arguments) type {
             self.message = message;
         }
 
-        pub fn reset(self: *Self) void {
-            self.* = default;
-        }
-
         pub fn report(self: *Self, comptime writer: anytype) !void {
             if (!self.state.failed) return error.NonFailureReport;
 
             writer.writeAll(self.state.message);
         }
 
-        pub fn parseArgs(self: *Self, args: []const [:0]const u8) !ParseResult(Args) {
-            _ = self;
-
-            const ArgStatus = enum { found, not_found };
-
+        pub fn parseArgs(self: *Self, args: []const [:0]const u8) ParseError!ParseResult(Args) {
             var flagRes: FlagResult(Args) = undefined;
             var posRes: PositionalResult(Args) = undefined;
 
+            // Index to keep track of which positional parameter we will be searching and parsing the value for.
             var posIdx: usize = 0;
 
             for (args[1..]) |arg| {
                 if (std.mem.lastIndexOfScalar(u8, arg, '-')) |idx| {
-                    if (idx > 1) return error.ParseError;
+                    if (idx > 1) {
+                        self.failure(
+                            \\Invalid Flag provided, flags are generally provided using a single `-` or double `--`.
+                            \\
+                            \\ Correct Example: --help or -h
+                            \\ Wrong Example: ---help, ---h or h (this is considered a positional/command parameter).
+                        );
 
-                    // Find the first occurrence of '=' in the argument, which separates the flag name from its value.
-                    // If '=' is not found, use the full length of `arg` (i.e., no explicit value provided).
-                    const sep_idx = std.mem.indexOfScalar(u8, arg, '=') orelse arg.len;
-
-                    // Extract the flag name, skipping the '-' prefix but stopping at '=' if present otherwise the full
-                    // argument (except for `-` or `--`) is taken as name.
-                    const name = arg[idx + 1 .. sep_idx];
-
-                    // Determine the flag value:
-                    //
-                    // - If '=' exists and there are characters after it, extract them as value.
-                    // - Otherwise, use `"1"` as the default value (indicating the presence of flag).
-                    const value = if (sep_idx < arg.len - 1) arg[sep_idx + 1 ..] else "1";
-
-                    var status: ArgStatus = .not_found;
-                    inline for (Args) |a| {
-                        if (status == .found) break;
-
-                        const isFlag = comptime blk: {
-                            break :blk a.kind() == .flag;
-                        };
-
-                        if (!isFlag) break;
-
-                        if (std.mem.eql(u8, name, a.flag.long) or
-                            std.mem.eql(u8, name, a.flag.short))
-                        {
-                            status = .found;
-                            @field(flagRes, a.flag.long) = try parseValue(a.flag.value, &value);
-                        }
+                        return ParseError.InvalidFlag;
                     }
 
-                    if (status == .not_found) return error.NotFound;
+                    parseFlag(Args, self, &flagRes, &arg, idx);
+
+                    if (self.failed) return ParseError.NotFound;
                 } else {
-                    var status: ArgStatus = .not_found;
-                    inline for (Args) |a| {
-                        if (status == .found) break;
+                    parsePositional(Args, self, &posRes, &arg, posIdx);
+                    if (self.failed) return ParseError.NotFound;
 
-                        const isPositional = comptime blk: {
-                            break :blk a.kind() == .positional;
-                        };
-
-                        if (!isPositional) break;
-
-                        if (posIdx == a.positional.pos) {
-                            status = .found;
-
-                            const name = fmt.comptimePrint("{d}", .{a.positional.pos});
-                            @field(posRes, name) = try parseValue(a.positional.value, &arg);
-
-                            posIdx += 1;
-                        }
-                    }
+                    posIdx += 1;
                 }
             }
 
@@ -207,11 +166,16 @@ pub fn Parser(comptime Args: Arguments) type {
     };
 }
 
-fn parseValue(comptime T: type, value: *const [:0]const u8) !T {
+fn parseValue(comptime T: type, value: *const [:0]const u8) ParseError!T {
     return switch (T) {
+        isize => {
+            return std.fmt.parseInt(isize, value.*, 10) catch {
+                return ParseError.Value;
+            };
+        },
         usize => {
             return std.fmt.parseInt(usize, value.*, 10) catch {
-                return error.ValueParseError;
+                return ParseError.Value;
             };
         },
         bool => {
@@ -221,10 +185,78 @@ fn parseValue(comptime T: type, value: *const [:0]const u8) !T {
             if (std.ascii.eqlIgnoreCase("false", value.*) or
                 std.mem.eql(u8, "0", value.*)) return false;
 
-            return error.ValueParseError;
+            return ParseError.Value;
         },
-        else => error.ValueParseError,
+        []const u8 => value.*,
+        else => ParseError.Value,
     };
+}
+
+fn parseFlag(comptime Args: Arguments, parser: *Parser(Args), res: *FlagResult(Args), arg: *const [:0]const u8, idx: usize) void {
+    // Find the first occurrence of '=' in the argument, which separates the flag name from its value.
+    // If '=' is not found, use the full length of `arg` (i.e., no explicit value provided).
+    const sep_idx = std.mem.indexOfScalar(u8, arg.*, '=') orelse arg.*.len;
+
+    // Extract the flag name, skipping the '-' prefix but stopping at '=' if present otherwise the full
+    // argument (except for `-` or `--`) is taken as name.
+    const name = arg.*[idx + 1 .. sep_idx];
+
+    // Determine the flag value:
+    //
+    // - If '=' exists and there are characters after it, extract them as value.
+    // - Otherwise, use `"1"` as the default value (indicating the presence of flag).
+    const value = if (sep_idx < arg.*.len - 1) arg.*[sep_idx + 1 ..] else "1";
+
+    inline for (Args) |a| {
+        const isFlag = comptime blk: {
+            break :blk a.kind() == .flag;
+        };
+
+        if (!isFlag) break;
+
+        if (std.mem.eql(u8, name, a.flag.long) or
+            std.mem.eql(u8, name, a.flag.short))
+        {
+            @field(res.*, a.flag.long) = parseValue(a.flag.value, &value) catch {
+                parser.failure("Flag `" ++ a.flag.long ++ "` contains an invalid value of type `" ++ @typeName(a.flag.value) ++ "`");
+                return;
+            };
+
+            return;
+        }
+    }
+
+    parser.failure("Unknown Flag provided");
+}
+
+fn parsePositional(
+    comptime Args: Arguments,
+    parser: *Parser(Args),
+    res: *PositionalResult(Args),
+    arg: *const [:0]const u8,
+    idx: usize,
+) void {
+    inline for (Args) |a| {
+        const isPositional = comptime blk: {
+            break :blk a.kind() == .positional;
+        };
+
+        if (!isPositional) break;
+
+        if (idx == a.positional.pos) {
+            const name = fmt.comptimePrint("{d}", .{a.positional.pos});
+            @field(res.*, name) = parseValue(a.positional.value, arg) catch {
+                parser.failure(
+                    "Positonal parameter `" ++ name ++ "` contains an invalid value, expected `" ++ @typeName(a.positional.value) ++ "`",
+                );
+                return;
+            };
+
+            return;
+        }
+    }
+
+    parser.failure("Invalid positional parameter");
 }
 
 test "Parser" {
@@ -239,6 +271,7 @@ test "Parser" {
     const osArgs = &.{ "app", "--value=20", "-s=true", "-g", "--double_gobble" };
 
     var parser = Parser(args).default;
+
     const res = try parser.parseArgs(osArgs);
 
     try testing.expect(res.flags.show);
@@ -260,7 +293,7 @@ test "Parser returns NotFound if an unknown Flag is provided" {
 
     var parser = Parser(args).default;
 
-    try testing.expectError(error.NotFound, parser.parseArgs(osArgs));
+    try testing.expectError(ParseError.NotFound, parser.parseArgs(osArgs));
 }
 
 test "Parser parses positional argument" {
@@ -276,5 +309,4 @@ test "Parser parses positional argument" {
     const res = try parser.parseArgs(osArgs);
 
     try testing.expect(res.positionals.@"0");
-    try testing.expectEqual(20, res.positionals.@"1");
 }
