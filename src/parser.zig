@@ -11,7 +11,7 @@ const ArgIterator = process.ArgIterator;
 const Argument = argument.Argument;
 const Arguments = []const argument.Argument;
 
-pub const ParseError = error{ OutOfMemory, NotFound, Value, InvalidFlag };
+pub const ParseError = error{ OutOfMemory, NotFound, Value, InvalidFlag, NonFailureReport };
 
 pub fn ParseResult(comptime Args: Arguments) type {
     return struct {
@@ -120,7 +120,7 @@ pub fn Parser(comptime Args: Arguments) type {
         }
 
         pub fn report(self: *Self, comptime writer: anytype) !void {
-            if (!self.state.failed) return error.NonFailureReport;
+            if (!self.state.failed) return ParseError.NonFailureReport;
 
             writer.writeAll(self.state.message);
         }
@@ -309,4 +309,5 @@ test "Parser parses positional argument" {
     const res = try parser.parseArgs(osArgs);
 
     try testing.expect(res.positionals.@"0");
+    try testing.expectEqual(20, res.positionals.@"1");
 }
