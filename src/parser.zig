@@ -234,7 +234,7 @@ fn parsePositional(
     parser: *Parser(Args),
     res: *PositionalResult(Args),
     arg: *const [:0]const u8,
-    idx: usize,
+    pos: usize,
 ) void {
     inline for (Args) |a| {
         const isPositional = comptime blk: {
@@ -243,7 +243,7 @@ fn parsePositional(
 
         if (!isPositional) break;
 
-        if (idx == a.positional.pos) {
+        if (pos == a.positional.pos) {
             const name = fmt.comptimePrint("{d}", .{a.positional.pos});
             @field(res.*, name) = parseValue(a.positional.value, arg) catch {
                 parser.failure(
