@@ -1,11 +1,88 @@
 const std = @import("std");
+
+const StaticStringMap = std.StaticStringMap;
 const testing = std.testing;
 
+pub fn StaticStringMapEntry(comptime V: type) type {
+    return struct {
+        key: []const u8,
+        value: V,
+    };
+}
+
 pub const Command = struct {
+    const Self = @This();
+
     name: [:0]const u8,
     desc: [:0]const u8 = "",
-    args: []const Argument = &.{},
-    sub_cmds: []const Command = &.{},
+    args: StaticStringMap(Argument),
+    sub_cmds: StaticStringMap(Command),
+
+    pub fn init(
+        comptime Options: struct {
+            name: [:0]const u8,
+            desc: [:0]const u8 = "",
+            args: []const Argument = &.{},
+            sub_cmds: []const Command = &.{},
+        },
+    ) Self {
+        // TODO: We can optimize this to be more efficient and store the provided Array of args & sub_cmds alongside
+        // a hashmap.
+        //
+        // Array will serve its purpose as a container with actual elements and map will be used as a fast lookup index.
+        //
+        // In map, keys will be the actual name of `Flag`, (long) & (short) properties in this case and for `Positional`
+        // their (pos) property will be converted to []const u8.
+        //
+        // Values of map, will be the indexes of the actual element stored in the Array. This way we won't have to store
+        // Argument twice (once for each Long & Short) instance of Flag parameter.
+        //
+        // In practice this should help in reducing overall memory usage along with giving a solid performance boost since
+        // index lookups/access in Arrays are O(1) in TC and Hashmap usually provide O(1) TC in exchange of some memory usage.
+        //
+        const args_kvs = comptime blk: {
+            const len = calc_len: {
+                var count: usize = 0;
+
+                for (Options.args) |arg| {
+                    switch (arg.kind()) {
+                        .flag or .value_flag => count += 1,
+                    }
+                }
+
+                if (count == 0) break :blk .{};
+                break :calc_len count;
+            };
+
+            const arr: [len]StaticStringMapEntry(Argument) = undefined;
+
+            for (Options.args, 0..) |arg, i| {
+                switch (arg.kind()) {
+                    .flag => {
+                        arg[i] = .{
+                            .key = arg.flag.long,
+                            .value = arg,
+                        };
+
+                        arg[i + len] = .{
+                            .key = arg.flag.short,
+                            .value = arg,
+                        };
+                    },
+                    .value_flag => arg.value_flag.long,
+                    .positional => std.fmt.comptimePrint("{d}", .{arg.positional.pos}),
+                }
+            }
+
+            break :blk arr[0..];
+        };
+
+        return .{
+            .name = Options.name,
+            .desc = Options.desc,
+            .args = StaticStringMap(Argument).initComptime(&args_kvs),
+        };
+    }
 };
 
 pub const Flag = struct {
@@ -184,5 +261,4 @@ test "Command" {
     try testing.expectEqualStrings(name, cmd2.name);
     try testing.expectEqualStrings(cmd_desc, cmd2.desc);
     try testing.expectEqual(3, cmd2.args.len);
-    try testing.expectEqualSlices(Argument, args, cmd2.args);
 }
