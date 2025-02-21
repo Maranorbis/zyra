@@ -13,6 +13,7 @@ const testing = std.testing;
 pub const Info = struct {
     name: [:0]const u8,
     desc: [:0]const u8 = "",
+    version: [:0]const u8 = "0.0.0",
 };
 
 pub const Context = struct {
@@ -41,11 +42,13 @@ pub fn init(comptime AppInfo: Info, comptime Ctx: Context) Self {
 test "App" {
     const name = "test_app";
     const desc = "just for testing";
+    const version = "0.1.0";
 
-    const app = Self.init(.{ .name = name, .desc = desc }, .{});
+    const app = Self.init(.{ .name = name, .desc = desc, .version = version }, .{});
 
     try testing.expectEqualStrings(name, app.info.name);
     try testing.expectEqualStrings(desc, app.info.desc);
+    try testing.expectEqualStrings(version, app.info.version);
     try testing.expectEqual(0, app.context.args.len);
     try testing.expectEqual(0, app.context.cmds.len);
 
@@ -53,6 +56,7 @@ test "App" {
 
     try testing.expectEqualStrings(name, bare_app.info.name);
     try testing.expectEqualStrings("", bare_app.info.desc);
+    try testing.expectEqualStrings("0.0.0", bare_app.info.version);
     try testing.expectEqual(0, bare_app.context.args.len);
     try testing.expectEqual(0, bare_app.context.cmds.len);
 }
